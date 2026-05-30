@@ -40,7 +40,7 @@ LOTTIES_DIR  = Path("lotties")
 LOGO_ID      = "mylogo"
 COLOR_BA     = "BA0047"
 COLOR_FF     = "FF4A52"
-ALLOWED_USER = 1899208318 #ADMIN_ID
+ALLOWED_USER = 7196302099 #ADMIN_ID
 
 DEFAULT_FONT = str(Path(__file__).parent / "Anton-Regular.ttf")
 
