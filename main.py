@@ -371,7 +371,7 @@ def main_kb():
 
 def select_kb():
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🎯 FULL (65 items)", callback_data="full"),
+        InlineKeyboardButton(text="🎯 FULL (66 items)", callback_data="full"),
     ]])
 
 
