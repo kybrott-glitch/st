@@ -577,7 +577,7 @@ def select_kb():
 
     return InlineKeyboardMarkup(inline_keyboard=[[
 
-        InlineKeyboardButton(text="🎯 FULL (65 ta)", callback_data="full"),
+        InlineKeyboardButton(text="🎯 FULL (102 ta)", callback_data="full"),
 
     ]])
 
@@ -597,7 +597,7 @@ def parse_indices(text: str) -> list[int] | None:
 
             n = int(p)
 
-            if n < 1 or n > 140: return None
+            if n < 1 or n > 102: return None
 
             result.append(n)
 
@@ -735,8 +735,10 @@ async def scale_button(call: CallbackQuery, state: FSMContext):
     action = call.data[len("scale_"):]
     if action == "done":
         await call.message.edit_reply_markup(reply_markup=None)
-        await run_pack(call.message, await state.get_data())
+        d = await state.get_data()
         await state.clear()
+        # Pass real user id explicitly — call.message.from_user would be the bot
+        await run_pack(call.message, d, uid=call.from_user.id)
         return
     d = await state.get_data()
     cur = d.get("scale", 100.0)
@@ -969,7 +971,11 @@ async def scale_input(msg: Message, state: FSMContext):
 
     t = msg.text.strip()
 
-    if t.upper() == "DONE": await run_pack(msg, await state.get_data()); await state.clear(); return
+    if t.upper() == "DONE":
+        d = await state.get_data()
+        await state.clear()
+        await run_pack(msg, d)
+        return
 
     d = await state.get_data(); cur = d.get("scale", 100.0)
 
@@ -985,13 +991,27 @@ async def scale_input(msg: Message, state: FSMContext):
 
     await state.update_data(scale=new_s); await send_preview(msg, state)
 
-async def run_pack(msg: Message, d: dict):
+async def run_pack(msg: Message, d: dict, uid: int | None = None):
+    import traceback
 
-    uid, me = msg.from_user.id, await bot.get_me()
+    # uid may be passed explicitly when msg is a bot-sent message (callback context)
+    if uid is None:
+        uid = msg.from_user.id
+    me = await bot.get_me()
 
     name = f"pk{''.join(random.choices(string.ascii_lowercase + string.digits, k=8))}_by_{me.username}"
 
     stat = await msg.answer(f"⚙️ Processing... <code>{name}</code>", parse_mode="HTML")
+
+    # ── Check lotties dir ──
+    if not LOTTIES_DIR.exists() or not any(LOTTIES_DIR.glob("*.json")):
+        await stat.edit_text(f"❌ Error: <code>lotties/</code> folder is empty or missing.", parse_mode="HTML")
+        return
+
+    # ── Check layers ──
+    if not d.get("layers"):
+        await stat.edit_text("❌ Error: No logo/text layers found in state. Please restart with /start.", parse_mode="HTML")
+        return
 
     files = []
 
@@ -1005,7 +1025,11 @@ async def run_pack(msg: Message, d: dict):
 
         except: pass
 
-    created = False; ok = 0
+    if not files:
+        await stat.edit_text("❌ Error: No matching lottie files found for selected indices.", parse_mode="HTML")
+        return
+
+    created = False; ok = 0; last_error = ""
 
     for i, (fp, n) in enumerate(files):
 
@@ -1017,19 +1041,42 @@ async def run_pack(msg: Message, d: dict):
 
             sd = {"sticker": BufferedInputFile(to_tgs(mod), filename="s.tgs"), "emoji_list": ["⭐️"], "format": "animated"}
 
-            if not created: await bot.create_new_sticker_set(user_id=uid, name=name, title=f"Pack {name[:5]}", stickers=[sd], sticker_type="custom_emoji"); created = True
-
-            else: await bot.add_sticker_to_set(user_id=uid, name=name, sticker=sd)
+            if not created:
+                await bot.create_new_sticker_set(user_id=uid, name=name, title=f"Pack {name[:5]}", stickers=[sd], sticker_type="custom_emoji")
+                created = True
+            else:
+                await bot.add_sticker_to_set(user_id=uid, name=name, sticker=sd)
 
             ok += 1
 
             if ok % 10 == 0: await stat.edit_text(f"⚙️ {ok}/{len(files)} ✅")
 
-        except: pass
+        except Exception as e:
+            tb = traceback.format_exc()
+            last_error = f"File {fp.name}: {type(e).__name__}: {e}"
+            logger.error(f"[run_pack] {last_error}\n{tb}")
+            # Send first error to chat so you can see it immediately
+            if not created and i == 0:
+                short = (last_error[:300] + "…") if len(last_error) > 300 else last_error
+                await stat.edit_text(
+                    f"❌ Failed on first sticker:\n<code>{short}</code>",
+                    parse_mode="HTML"
+                )
+                return
 
-    if created: await stat.edit_text(f"✅ Done!\n🔗 <a href='https://t.me/addemoji/{name}'>t.me/addemoji/{name}</a>", parse_mode="HTML")
-
-    else: await stat.edit_text("❌ Error.")
+    if created:
+        await stat.edit_text(
+            f"✅ Done! ({ok}/{len(files)} stickers)\n"
+            f"🔗 <a href='https://t.me/addemoji/{name}'>t.me/addemoji/{name}</a>"
+            + (f"\n⚠️ {len(files)-ok} failed — check logs" if ok < len(files) else ""),
+            parse_mode="HTML"
+        )
+    else:
+        short = (last_error[:400] + "…") if len(last_error) > 400 else last_error
+        await stat.edit_text(
+            f"❌ Error — nothing was created.\n<code>{short}</code>",
+            parse_mode="HTML"
+        )
 
 async def main(): await dp.start_polling(bot)
 
